@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Leena 1v1 Cyber Arena</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;800;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #06060c;
+            color: #fff;
+            font-family: 'Orbitron', sans-serif;
+            margin: 0;
+            padding: 15px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+        }
+        .header-panel {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            justify-content: space-between;
+            background: rgba(255,255,255,0.03);
+            padding: 10px 15px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        #gameCanvas {
+            background: #0f0f1a;
+            border: 2px solid #ff2a5f;
+            border-radius: 16px;
+            box-shadow: 0 0 25px rgba(255, 42, 95, 0.25);
+            max-width: 100%;
+        }
+        .controls-pad {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            width: 100%;
+            max-width: 400px;
+            margin-top: 15px;
+        }
+        .btn {
+            background: rgba(255,255,255,0.02);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 14px;
+            font-size: 14px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 800;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-move { border-color: #00f0ff; color: #00f0ff; }
+        .btn-fire { border-color: #ff2a5f; color: #ff2a5f; grid-column: span 2; font-size: 18px; padding: 16px; background: rgba(255, 42, 95, 0.05); }
+        .btn-shield { border-color: #00ff88; color: #00ff88; }
+        
+        .status-alert {
+            margin-top: 12px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #00f0ff;
+            text-shadow: 0 0 5px #00f0ff;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-panel">
+        <div style="color: #00f0ff;">🖤 P1 (Black): <span id="p1-hp">100</span> HP</div>
+        <div style="color: #ff2a5f;">❤️ P2 (Red): <span id="p2-hp">100</span> HP</div>
+    </div>
+
+    <canvas id="gameCanvas" width="360" height="240"></canvas>
+
+    <div class="status-alert" id="status-text">Connecting to Arena... ⏳</div>
+
+    <div class="controls-pad">
+        <button class="btn btn-move" onclick="sendAction('move_left')">◀ MOVE LEFT</button>
+        <button class="btn btn-move" onclick="sendAction('move_right')">MOVE RIGHT ▶</button>
+        <button class="btn btn-shield" onclick="sendAction('shield')">🛡️ SHIELD</button>
+        <button class="btn" style="border-color:#ff9f00; color:#ff9f00;" onclick="location.reload()">🔄 REFRESH</button>
+        <button class="btn btn-fire" id="fire-btn" onclick="sendAction('fire')">🔫 OPEN FIRE</button>
+    </div>
+
+    <script>
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Extract credentials from link
+        const urlParams = new URLSearchParams(window.location.search);
+        const session_id = urlParams.get('session_id');
+        const my_id = Telegram.WebApp.initDataUnsafe.user ? Telegram.WebApp.initDataUnsafe.user.id : urlParams.get('uid');
+        
+        // Dynamic server endpoint matching bot backend
+        const BACKEND_URL = window.location.origin; 
+
+        let gameState = null;
+
+        // 🔄 Sync State Poller (Lag-free architecture)
+        async def syncState() {
+            try {
+                let response = await fetch(`${BACKEND_URL}/duel_sync?session_id=${session_id}`);
+                gameState = await response.json();
+                renderArena();
+                
+                if (gameState.status === "finished") {
+                    document.getElementById('status-text').innerText = `💥 GAME OVER! Winner ID: ${gameState.winner}`;
+                    document.getElementById('fire-btn').disabled = true;
+                    setTimeout(() => {
+                        Telegram.WebApp.sendData(JSON.stringify({ game: "web_duel", session_id: session_id }));
+                        Telegram.WebApp.close();
+                    }, 3000);
+                    return;
+                }
+
+                if (gameState.current_turn == my_id) {
+                    document.getElementById('status-text').innerText = "YOUR TURN! TAKE THE SHOT! 🎯";
+                    document.getElementById('status-text').style.color = "#00ff88";
+                } else {
+                    document.getElementById('status-text').innerText = "Waiting for enemy move... ⏳";
+                    document.getElementById('status-text').style.color = "#ff2a5f";
+                }
+            } catch(e) {
+                console.log("Sync Error", e);
+            }
+        }
+
+        async def sendAction(action_type) {
+            if (!gameState || gameState.current_turn != my_id) {
+                Telegram.WebApp.showAlert("🛑 Hold on! It's not your turn, babes! 💅");
+                return;
+            }
+            try {
+                await fetch(`${BACKEND_URL}/duel_action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: session_id, user_id: my_id, action: action_type })
+                });
+                syncState();
+            } catch(e) { console.log(e); }
+        }
+
+        function renderArena() {
+            if (!gameState) return;
+
+            // Clear Canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Grid Lines for Cyberpunk effect
+            ctx.strokeStyle = "rgba(255,255,255,0.02)";
+            for(let i=0; i<canvas.width; i+=20) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
+
+            // Sync HP panels
+            document.getElementById('p1-hp').innerText = gameState.p1.hp;
+            document.getElementById('p2-hp').innerText = gameState.p2.hp;
+
+            // DRAW PLAYER 1: Matte Black with Neon Blue outline
+            ctx.fillStyle = "#111116";
+            ctx.strokeStyle = "#00f0ff";
+            ctx.lineWidth = 3;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00f0ff";
+            ctx.beginPath();
+            ctx.arc(gameState.p1.pos, 180, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // DRAW PLAYER 2: Matte Crimson with Neon Red outline
+            ctx.fillStyle = "#1a050a";
+            ctx.strokeStyle = "#ff2a5f";
+            ctx.lineWidth = 3;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#ff2a5f";
+            ctx.beginPath();
+            ctx.arc(gameState.p2.pos, 180, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw Active Shields
+            ctx.shadowBlur = 15;
+            if (gameState.p1.shield) {
+                ctx.strokeStyle = "#00ff88"; ctx.shadowColor = "#00ff88"; ctx.beginPath();
+                ctx.arc(gameState.p1.pos, 180, 26, -Math.PI/2, Math.PI/2); ctx.stroke();
+            }
+            if (gameState.p2.shield) {
+                ctx.strokeStyle = "#00ff88"; ctx.shadowColor = "#00ff88"; ctx.beginPath();
+                ctx.arc(gameState.p2.pos, 180, 26, Math.PI/2, -Math.PI/2); ctx.stroke();
+            }
+
+            // Reset shadows for lines
+            ctx.shadowBlur = 0;
+
+            // Draw Bullet tracing mechanics if any animation trigger exists
+            if (gameState.last_action === "fire") {
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(gameState.p1.pos, 180);
+                ctx.lineTo(gameState.p2.pos, 180);
+                ctx.stroke();
+            }
+        }
+
+        setInterval(syncState, 1000);
+    </script>
+</body>
+</html>
